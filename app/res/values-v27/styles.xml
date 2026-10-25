@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Free My TV's settings: see-through, so the home screen shows behind the panel (Android 8.1 and newer). -->
-    <style name="FreeMyTV.Panel" parent="FreeMyTV.Home">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowIsTranslucent">true</item>
-    </style>
-</resources>

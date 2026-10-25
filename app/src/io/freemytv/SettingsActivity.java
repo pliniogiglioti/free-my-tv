@@ -39,8 +39,9 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Free My TV's settings (the app's icon, "All Apps", or the gear on the home screen), as on Google TV: a dark panel
- * that slides in from the right over the dimmed home screen, the focused row in white. "Home screen"
+ * Free My TV's settings (the app's icon, "All Apps", or the gear on the home screen), in two columns: the menu on
+ * the left; what a row opens on the right (on the menu itself, the comparison, the picks and the notices), with
+ * the focused row in white and the menu's open row marked. "Home screen"
  * opens the Free My TV / Original choice (with a check on the current one); the switch runs in the main process
  * (HomeMode) and this screen only asks for it and follows the state file.
  */
@@ -137,14 +138,15 @@ public class SettingsActivity extends Activity {
                 POWER = 6;
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
-        private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
-        // The main menu: eight rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
-        // one 1080 px screen: the rows share the 462 px that seven took.
-        private static final float MAIN_TOP = 140, ROW_H = 53.75f, MAIN_GAP = 4;
+        private static final float LIST_X = 1000, LIST_R = 1840, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
+        // The menu, in the left column (MENU_X to MENU_R); what it opens, in the right one (LIST_X to LIST_R).
+        private static final float MAIN_TOP = 186, ROW_H = 72, MAIN_GAP = 10, MENU_X = 80, MENU_R = 860;
+        /** The menu's rows, by what they open (0 Home Screen … 7 TV Settings); the shelf (3) is picked on the home
+         *  screen's Apps tab now (holding OK), so it isn't here. */
+        private static final int[] MAIN_ROWS = {0, 1, 2, 4, 5, 6, 7};
+        private final boolean[] mainOff = new boolean[MAIN_ROWS.length];
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
-        /** The panel's left edge (1920 space) and its slide in from the right. */
-        private static final float PANEL_X = 960;
-        private final Spring enter = new Spring(0.32f, 0.92f, 0);
+        private final Spring enter = new Spring(0.32f, 0.92f, 0);   // the screen fades in
 
         private final SettingsActivity activity;
         private final Scene scene = new Scene();
@@ -259,7 +261,8 @@ public class SettingsActivity extends Activity {
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"), Ui.tr("Sleep Timer"),
                             Ui.tr("TV Settings")};
-                    return row - 1 < names.length ? names[row - 1] : "";
+                    int item = MAIN_ROWS[row];
+                    return item - 1 < names.length ? names[item - 1] : "";
                 }
                 case HOME_CHOICE: {
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
@@ -303,6 +306,8 @@ public class SettingsActivity extends Activity {
             if (screen == MAIN) {
                 top = MAIN_TOP + row * (ROW_H + MAIN_GAP);
                 height = ROW_H;
+                focusBox.set(MENU_X * k, top * k, MENU_R * k, (top + height) * k);
+                return focusBox;
             } else if (screen == HOME_CHOICE) {
                 top = LIST_TOP + 20 + row * (CHOICE_H + ROW_GAP);
                 height = CHOICE_H;
@@ -393,7 +398,7 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 8;
+                case MAIN: return MAIN_ROWS.length;
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return Math.min(SETTINGS_VISIBLE, settingLabels().length);
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -415,27 +420,26 @@ public class SettingsActivity extends Activity {
             long up = SystemClock.uptimeMillis();
             float seconds = (up - startedAt) / 1000f;
             enter.step(dt);
-            float e = Ui.clamp(enter.value);
-            // The home screen behind, dimmed; the panel slides in from the right.
-            c.drawColor(Ui.alpha(0xFF000000, 0.55f * e));
-            c.save();
-            c.translate((1 - e) * (w - PANEL_X * k), 0);
-            Paint panel = white;
-            int was = panel.getColor();
-            panel.setColor(0xF71B1B1E);
-            c.drawRect(PANEL_X * k, 0, w, h, panel);
-            panel.setColor(was);
-            float tx = (LIST_X + 30) * k;
+            // The menu's column a shade lighter than the rest, as on the TV's own settings; a soft fade in.
+            Paint bg = white;
+            int was = bg.getColor();
+            bg.setColor(0xFF0E0E10);
+            c.drawRect(0, 0, w, h, bg);
+            bg.setColor(0xFF19191C);
+            c.drawRect(0, 0, (MENU_R + 60) * k, h, bg);
+            bg.setColor(was);
             title.setTextAlign(Paint.Align.LEFT);
-            c.drawText("Free My TV", tx, 92 * k, title);
+            c.drawText("Free My TV", (MENU_X + 30) * k, 112 * k, title);
             title.setTextAlign(Paint.Align.CENTER);
-            version.setTextAlign(Paint.Align.RIGHT);
-            c.drawText(versionName(getContext()), (LIST_R - 30) * k, 92 * k, version);
+            version.setTextAlign(Paint.Align.LEFT);
+            c.drawText(versionName(getContext()), (MENU_X + 30) * k, (h / k - 60) * k, version);
             version.setTextAlign(Paint.Align.CENTER);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c);
-            else drawList(c);
-            c.restore();
+            drawMain(c, seconds);
+            if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c);
+            else if (screen != MAIN) drawList(c);
+            float e = Ui.clamp(enter.value);
+            if (e < 0.999f) c.drawColor(Ui.alpha(0xFF0E0E10, 1 - e));
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -446,11 +450,21 @@ public class SettingsActivity extends Activity {
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
                     Ui.tr("Remote Buttons"), Ui.tr("Sleep Timer"), Ui.tr("TV Settings")};
             String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", "", ""};
-            for (int i = 0; i < labels.length; i++) {
-                float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
-                rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
-                float f = drawRowBackground(c, i);
-                boolean off = unavailable(i) != null;
+            boolean active = screen == MAIN;
+            int open = active ? -1 : openRow();
+            for (int row = 0; row < MAIN_ROWS.length; row++) {
+                int i = MAIN_ROWS[row];
+                float y = (MAIN_TOP + row * (ROW_H + MAIN_GAP)) * k;
+                rowRect.set(MENU_X * k, y, MENU_R * k, y + ROW_H * k);
+                float f = active ? drawRowBackground(c, row) : 0;
+                if (row == open) {
+                    // The row whose screen is open on the right: marked, not focused.
+                    white.setAlpha(0x2E);
+                    c.drawRoundRect(rowRect, 18 * k, 18 * k, white);
+                    white.setAlpha(255);
+                }
+                if (active) mainOff[row] = unavailable(row) != null;   // kept for when another screen is open
+                boolean off = mainOff[row];
                 int ink = off ? blend(0x73FFFFFF, 0x731C1C1E, f) : blend(0xF2FFFFFF, INK, f);
                 rowLabel.setColor(ink);
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
@@ -459,7 +473,7 @@ public class SettingsActivity extends Activity {
                 if (off) {
                     rowValue.setColor(blend(0x59FFFFFF, 0x591C1C1E, f));
                     c.drawText(Ui.tr("Unavailable"), right, base, rowValue);
-                } else if (i >= 2) {
+                } else if (i >= 2 && i != 7) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
                 } else if (i == 0 && working) {
@@ -477,7 +491,9 @@ public class SettingsActivity extends Activity {
                 }
             }
 
-            float y = (MAIN_TOP + labels.length * (ROW_H + MAIN_GAP) + 20) * k;
+            if (!active) return;
+            // On the right: how the last switch went, the comparison, the picks and the notices.
+            float y = (MAIN_TOP + 24) * k;
             String error = state.optString("error");
             if (working && busyText.equals(Ui.tr("Accept “Allow USB debugging?” on the TV (tick “Always allow”)."))) {
                 c.drawText(Ui.tr("On the TV: tick “Always allow” and press OK."),
@@ -497,9 +513,30 @@ public class SettingsActivity extends Activity {
                 c.restore();
                 y += errorLayout.getLineBaseline(errorLayout.getLineCount() - 1) - errorLayout.getLineBaseline(0) + 46 * k;
             }
-            y = drawComparison(c, y + 24 * k);
-            y = drawRecs(c, y + 26 * k);
-            drawNotices(c, y + 40 * k);
+            y = drawComparison(c, y);
+            y = drawRecs(c, y + 70 * k);
+            drawNotices(c, y + 70 * k);
+        }
+
+        /** The menu's row whose screen is open on the right. */
+        private int openRow() {
+            int item;
+            switch (screen) {
+                case HOME_CHOICE: item = 0; break;
+                case HOME_SETTINGS: item = 2; break;
+                case SHELF_EDIT: item = editingTop ? 4 : 3; break;
+                case REMOTE_KEYS: item = 5; break;
+                case POWER: item = 6; break;
+                case PICKER: item = pickFor == PICK_CITY || pickFor == PICK_LANGUAGE ? 2 : pickFor <= PICK_SLEEP ? 6 : 5; break;
+                default: return -1;
+            }
+            return rowOf(item);
+        }
+
+        /** The menu row that opens `item` (MAIN_ROWS), or 0. */
+        private static int rowOf(int item) {
+            for (int r = 0; r < MAIN_ROWS.length; r++) if (MAIN_ROWS[r] == item) return r;
+            return 0;
         }
 
         /** Home screen picks: status, and the credit TMDB asks for. */
@@ -692,8 +729,7 @@ public class SettingsActivity extends Activity {
                                 focus = pickFor - 1;
                                 screen = REMOTE_KEYS;
                             } else {
-                                focus = screen == HOME_SETTINGS ? 2 : screen == SHELF_EDIT ? (editingTop ? 4 : 3)
-                                        : screen == REMOTE_KEYS ? 5 : screen == POWER ? 6 : 0;
+                                focus = openRow();
                                 screen = MAIN;
                             }
                         }
@@ -774,8 +810,10 @@ public class SettingsActivity extends Activity {
          */
         private String need(int i) {
             switch (screen) {
-                case MAIN:
-                    return i == 5 ? Capabilities.NEED_REMOTE_BUTTONS : i == 6 ? Capabilities.NEED_ADB : null;
+                case MAIN: {
+                    int item = MAIN_ROWS[i];
+                    return item == 5 ? Capabilities.NEED_REMOTE_BUTTONS : item == 6 ? Capabilities.NEED_ADB : null;
+                }
                 case POWER: {
                     int id = powerRows()[i];
                     return id == P_WHERE ? Capabilities.NEED_OVERLAY : null;
@@ -1321,7 +1359,7 @@ public class SettingsActivity extends Activity {
                     pendingAt = SystemClock.uptimeMillis();
                 }
                 screen = MAIN;
-                focus = 0;
+                focus = rowOf(0);
             } else if (screen == PICKER && pickFor == PICK_CITY) {
                 String[] city = cities.get(pickScroll + focus);
                 Prefs.setCity(city[1], city[2], city[3]);
@@ -1362,27 +1400,25 @@ public class SettingsActivity extends Activity {
                 adjust(1);
                 invalidate();
                 return;
-            } else if (focus == 0) {
+            } else if (MAIN_ROWS[focus] == 0) {
                 if (busy()) return;
                 screen = HOME_CHOICE;
                 focus = freeActive() ? 0 : 1;
-            } else if (focus == 1) {
+            } else if (MAIN_ROWS[focus] == 1) {
                 pause();
                 activity.showPreview();
-            } else if (focus == 2) {
+            } else if (MAIN_ROWS[focus] == 2) {
                 screen = HOME_SETTINGS;
                 focus = 0;
                 pickScroll = 0;
-            } else if (focus == 3) {
-                openShelfEditor(false);
-            } else if (focus == 4) {
+            } else if (MAIN_ROWS[focus] == 4) {
                 openShelfEditor(true);
-            } else if (focus == 5) {
+            } else if (MAIN_ROWS[focus] == 5) {
                 HomeMode.ensureRemoteService(c, 0);   // the buttons work from inside other apps through this service
                 loadApps();
                 screen = REMOTE_KEYS;
                 focus = 0;
-            } else if (focus == 6) {
+            } else if (MAIN_ROWS[focus] == 6) {
                 pickScroll = 0;
                 screen = POWER;
                 focus = 0;

@@ -10,8 +10,7 @@
         <item name="android:colorBackgroundCacheHint">@null</item>
     </style>
 
-    <!-- Free My TV's settings: a panel over the home screen, as on Google TV. Android 8.0 refuses a see-through
-         activity with a fixed orientation, so there it's opaque (values-v27 makes it see-through). -->
+    <!-- Free My TV's settings: dark from the first frame (they draw their own two columns). -->
     <style name="FreeMyTV.Panel" parent="FreeMyTV.Home">
         <item name="android:windowBackground">@android:color/black</item>
     </style>

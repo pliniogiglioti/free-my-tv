@@ -2011,8 +2011,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return recentsOn() ? ROWS_TOP + ROW_STEP : ROWS_TOP;
     }
 
+    /** Popular's first row: under the shelf on Home; on Shows and Movies, in the shelf's place. */
     private float popularTop() {
-        return shelfTop() + ROW_CARD_H + POPULAR_STEP;
+        return tab == 0 ? shelfTop() + ROW_CARD_H + POPULAR_STEP : ROWS_TOP;
     }
 
     private void layoutRows() {
@@ -2521,7 +2522,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             retarget(false);
         } else if (zone != Z_SHELF) {
             zone = Z_SHELF;
-            if (tab == APPS_TAB) selectTab(0);
+            if (tab != 0) selectTab(0);
             retarget(false);
         } else {
             return;
@@ -3334,7 +3335,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void selectTab(int index) {
         if (index == tab) return;
         tab = index;
-        shelfAway.target = tab == APPS_TAB ? 1 : 0;
+        shelfAway.target = tab != 0 ? 1 : 0;     // the shelf is Home's: Shows, Movies and Apps go without it
         if (zone == Z_RECENT && !recentsOn()) zone = Z_SHELF;
         if ((zone == Z_POPULAR && !moviesOn()) || (zone == Z_SHOWS && !showsOn())) zone = Z_SHELF;
         moviesRow.scroll.snap(moviesRow.scroll.target = 0);
@@ -3709,9 +3710,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
                 } else if (recentsOn()) {
                     zone = Z_RECENT;
-                } else {
+                } else if (tab != 0 && (moviesOn() || showsOn())) {
+                    zone = moviesOn() ? Z_POPULAR : Z_SHOWS;
+                } else if (tab == 0) {
                     zone = Z_SHELF;
                     if (!shelf.isEmpty()) shelfIndex = 0;
+                } else {
+                    return true;
                 }
                 break;
             case Z_TOP:
@@ -3772,6 +3777,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 } else if (dy < 0 && zone == Z_SHOWS && moviesOn()) {
                     zone = Z_POPULAR;
                     moviesRow.index = moviesRow.nearest(tmp.centerX());
+                } else if (dy < 0 && tab != 0) {
+                    zone = cards.isEmpty() ? Z_TOP : Z_CARDS;
+                    topIndex = tab;
                 } else if (dy < 0) {
                     zone = Z_SHELF;
                     if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, tmp.centerX());
