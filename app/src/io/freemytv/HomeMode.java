@@ -475,6 +475,11 @@ final class HomeMode {
             } catch (IOException e) {
                 AppLog.w("remote buttons service: " + e.getMessage());
             }
+            try {   // the Continue row's listener (Recs turns it on in Free My TV mode)
+                adb.shell("cmd notification disallow_listener " + c.getPackageName() + "/" + PlayingListener.class.getName());
+            } catch (IOException e) {
+                AppLog.w("playing listener: " + e.getMessage());
+            }
             SleepTimer.stop(c);
             adb.shell("appops set " + PKG + " SYSTEM_ALERT_WINDOW default");   // SleepOverlay's, if it was allowed
             Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time

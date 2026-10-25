@@ -58,6 +58,8 @@ final class HomeApps {
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5, DEVICE = 6;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
+    /** Google TV's search (the magnifier at the top right). */
+    static final int SEARCH = 8;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -176,20 +178,10 @@ final class HomeApps {
             Item it = new Item();
             it.kind = APP;
             it.pkg = pkg;
-            if (d == null) {
-                // An app picked in Settings > Shelf that isn't in SHELF: its own name and TV art.
-                it.key = pkg;
-                it.label = ri != null ? String.valueOf(ri.loadLabel(pm)) : pkg;
-                it.setTile(appTile(c, null, pkg, 0));
-            } else {
-                it.key = d[0];
-                it.label = d[1];
-                it.logo = shelfLogo(c, d[0], d[2], d[4], extract);
-                if (it.logo == null) it.setTile(appTile(c, d[0], d[2], 0xFF000000 | Integer.parseInt(d[3], 16)));
-                if (it.logo != null) it.logoInk = ink(it.logo);
-                it.logoDark = ownLogoCached(c, d[0] + "-dark");
-                it.logoScale = Float.parseFloat(d[5]);
-            }
+            // Every app with its own TV art, the same card as in the home screen's Apps tab.
+            it.key = d == null ? pkg : d[0];
+            it.label = d != null ? d[1] : ri != null ? String.valueOf(ri.loadLabel(pm)) : pkg;
+            it.setTile(appTile(c, null, pkg, 0));
             items.add(it);
         }
         return items;
@@ -234,11 +226,11 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings";
-    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS));
+    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SEARCH = "search", TOP_SETTINGS = "settings";
+    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS, TOP_SEARCH));
     static final int MAX_TOP = TOP_DEFAULT.size();
 
-    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Settings). */
+    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Settings, Search). */
     static List<String> topButtonKeys() {
         List<String> saved = Prefs.topButtons();
         if (saved == null) return TOP_DEFAULT;
@@ -247,7 +239,7 @@ final class HomeApps {
         return keys;
     }
 
-    /** The top buttons, ready to draw (0 to 3 of them). */
+    /** The top buttons, ready to draw (0 to 4 of them). */
     static List<Item> topButtons() {
         List<Item> items = new ArrayList<>();
         for (String key : topButtonKeys()) items.add(topButton(key));
@@ -258,6 +250,7 @@ final class HomeApps {
         switch (key) {
             case TOP_LIVE: return action(LIVE_TV, TOP_LIVE, Ui.tr("light|Live TV"), "live_tv");
             case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
+            case TOP_SEARCH: return action(SEARCH, TOP_SEARCH, Ui.tr("Search"), "search");
             default: return action(SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");
         }
     }
@@ -488,11 +481,20 @@ final class HomeApps {
 
     /** Installed, enabled TV apps that are not on the home screen (the TV's Settings is among them), plus our own. */
     static List<Item> others(Context c) {
+        return apps(c, false);
+    }
+
+    /** Every app that opens, the shelf's too (the home screen's Apps tab). */
+    static List<Item> installed(Context c) {
+        return apps(c, true);
+    }
+
+    private static List<Item> apps(Context c, boolean withShelf) {
         PackageManager pm = c.getPackageManager();
         Set<String> skip = new HashSet<>();
         // A built-in app is skipped only while it is on the shelf: one the person took off must still be listed here.
         List<String> onShelf = shelfPackages(c);
-        for (String[] d : SHELF) if (onShelf.contains(d[2])) skip.add(d[2]);
+        if (!withShelf) for (String[] d : SHELF) if (onShelf.contains(d[2])) skip.add(d[2]);
         skip.addAll(java.util.Arrays.asList(LIVE_TV_APPS));
         skip.add(c.getPackageName());
         skip.addAll(HIDDEN);
@@ -510,8 +512,10 @@ final class HomeApps {
             items.add(it);
         }
         Collections.sort(items, (a, b) -> a.label.toLowerCase(Locale.ROOT).compareTo(b.label.toLowerCase(Locale.ROOT)));
-        synchronized (HomeApps.class) {
-            TILES.keySet().removeIf(k -> k.contains(".") && !seen.contains(k));
+        if (withShelf) {   // only the whole list knows which tiles no app needs any more
+            synchronized (HomeApps.class) {
+                TILES.keySet().removeIf(k -> k.contains(".") && !seen.contains(k));
+            }
         }
         items.add(special(c, SETTINGS, "freemytv-settings", "Free My TV", "sparkles"));
         return items;
@@ -550,6 +554,9 @@ final class HomeApps {
             case DEVICE:
                 // A fresh task: else Back walks through whatever the maker's settings app had open before
                 intent = new Intent(it.intent).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                break;
+            case SEARCH:
+                intent = new Intent("android.search.action.GLOBAL_SEARCH");
                 break;
             default:
                 return false;

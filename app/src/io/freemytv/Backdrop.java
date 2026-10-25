@@ -16,7 +16,7 @@ import android.graphics.Shader;
  *  - the frosted version (192×108, heavily blurred) of the same image: the background of the frosted glass and of the
  *    bottom drawer;
  *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the cards;
- *  - with forLight: the cards (the photo without scrims, cropped wide and tall, already at the focused card size) and
+ *  - with forLight: the featured photo (without scrims, 16:9, sharp) and
  *    the frosted and glass versions blended with white (by day) and with near-black (at night).
  * Only what is needed gets built (with forLight, no full photo: the cards are lightweight, so all 9 for the three tabs
  * fit in memory, ready); the other fields stay null.
@@ -26,8 +26,8 @@ final class Backdrop {
     /** The UI's size against 1920×1080 (at most 1): nothing is built bigger than the screen can show. */
     private static final float UI_SCALE = uiScale();
     static final int W = ui(1920), H = ui(1080), FW = 192, FH = 108, GW = 480, GH = 270;
-    /** The cards at their focused size (1.05×): the wide one and the two tall ones. */
-    static final int WIDE_W = ui(1092), WIDE_H = ui(464), TALL_W = ui(336), TALL_H = ui(464);
+    /** The home screen's featured photo, sharp, in 16:9 (it fills the top of the screen, under the scrims). */
+    static final int WIDE_W = ui(1280), WIDE_H = ui(720);
 
     private static float uiScale() {
         android.util.DisplayMetrics m = android.content.res.Resources.getSystem().getDisplayMetrics();
@@ -41,7 +41,7 @@ final class Backdrop {
     final Bitmap image;
     final int[] frost;      // heavily blurred (frosted glass, bottom drawer)
     final int[] glass;      // lightly blurred (Liquid Glass: the photo shows through the glass)
-    final Bitmap wide, tall;            // the photo on the cards
+    final Bitmap wide, tall;            // wide: the featured photo (16:9); tall: no longer made (null)
     final BitmapShader wideShader, tallShader;   // theirs, for the rounded cards: they go away with the backdrop
     final int[] light, lightGlass;     // by day: the frosted and glass versions, lightened
     final Bitmap lightImage;            // by day: the background (the lightened frosted version, scaled up on screen)
@@ -94,7 +94,7 @@ final class Backdrop {
         Canvas c = new Canvas(out);
         if (forLight) {
             // Light design: everything comes from the photo without scrims.
-            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = card(out, TALL_W, TALL_H);
+            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = null;
             int[] frost = reduce(out, FW, FH, 3, 3);
             int[] light = whiten(frost.clone(), 0.82f);
             int[] glass = reduce(out, GW, GH, 2, 2);

@@ -190,6 +190,19 @@
 
         <!-- The sleep timer's minutes left over any app, while the timer runs. A process of its own: a foreground
              service in :home would keep the whole home screen in memory under the app in front. -->
+        <!-- What the apps play, for the home screen's Continue row: only their media sessions are read, never the
+             notifications. On only in Free My TV mode (allowed and taken back over ADB). -->
+        <service
+            android:name=".PlayingListener"
+            android:process=":watch"
+            android:exported="true"
+            android:label="Free My TV"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".SleepOverlay"
             android:process=":sleep"

@@ -46,6 +46,12 @@ final class Recs {
         int id;
         String kind;            // "movie" or "tv"
         String title, backdrop, meta = "", app, pkg;
+        String overview = "";   // TMDB's synopsis, in the TV's language when it has one
+        String poster = "";     // TMDB's poster (2:3), for the Popular row
+        // Continue row, from what was playing: "package|title" as the app named it, where you were, the length (ms)
+        // and the app's own picture (a file), for titles TMDB doesn't have.
+        String source = "", art = "";
+        long position, duration;
         String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
         java.io.File photo;     // one of your own photos (Photos): no title, no caption
@@ -60,7 +66,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 4;
+    private static final int CACHE_VERSION = 6;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -141,6 +147,23 @@ final class Recs {
     private volatile boolean light;     // light design: builds only the cards (all three tabs' cards fit in memory)
     private volatile long failedAt, keyStamp, linkRetryAt;
     private volatile String listLanguage = "";   // language used for the saved titles, genres and texts
+    /** Small copies of the photos of the titles opened with Watch (the home screen's Continue row). */
+    private final Map<String, Thumb> thumbs = new LinkedHashMap<>();
+    private final java.util.Set<String> thumbsPending = new java.util.HashSet<>();
+    private static final int HISTORY = 12, THUMBS = 16;
+    /** The featured titles taking turns at the top of each tab. */
+    static final int SLIDES = 5;
+
+    /** A title's photo at the Continue row's size, with its shader for the rounded card. */
+    static final class Thumb {
+        final Bitmap image;
+        final android.graphics.BitmapShader shader;
+
+        Thumb(Bitmap image) {
+            this.image = image;
+            shader = new android.graphics.BitmapShader(image, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP);
+        }
+    }
 
     private Recs(Context c) {
         context = c;
@@ -202,7 +225,7 @@ final class Recs {
         return now(null);
     }
 
-    /** This hour's 3, movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
+    /** This hour's SLIDES, movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
         List<Pick> list = new ArrayList<>();
         if (!hasKey(context)) return list;    // no TMDB key: no recommendations
@@ -213,11 +236,11 @@ final class Recs {
         }
         if (list.isEmpty()) return list;
         long hour = System.currentTimeMillis() / 3600_000L;
-        // Three per hour, never two from the same franchise ("Law & Order" and "Law & Order: Special…").
+        // SLIDES per hour, never two from the same franchise ("Law & Order" and "Law & Order: Special…").
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (int i = 0; i < list.size() && out.size() < 3; i++) {
-            Pick p = list.get((int) ((hour * 3 + i) % list.size()));
+        for (int i = 0; i < list.size() && out.size() < SLIDES; i++) {
+            Pick p = list.get((int) ((hour * SLIDES + i) % list.size()));
             if (seen.add(franchise(p.title))) out.add(p);
         }
         return out;
@@ -229,6 +252,18 @@ final class Recs {
         int cut = t.indexOf(':');
         if (cut < 0) cut = t.indexOf(" - ");
         return (cut > 0 ? t.substring(0, cut) : t).trim();
+    }
+
+    /** The Popular row: every title in the list with its app on the TV and a poster (movies, shows or both). */
+    List<Pick> popular(String kind) {
+        List<Pick> out = new ArrayList<>();
+        if (!hasKey(context)) return out;
+        Map<String, Boolean> have = new HashMap<>();
+        for (Pick p : picks) {
+            if ((kind == null || kind.equals(p.kind)) && p.detailed && p.pkg != null && !p.poster.isEmpty()
+                    && have.computeIfAbsent(p.pkg, this::installed)) out.add(p);
+        }
+        return out;
     }
 
     /** Name of the service the pick is on ("Netflix"), or empty. */
@@ -493,6 +528,8 @@ final class Recs {
         p.kind = kind;
         p.title = o.optString(kind.equals("movie") ? "title" : "name");
         p.backdrop = backdrop;
+        String poster = o.optString("poster_path", "");
+        if (!poster.equals("null")) p.poster = poster;
         list.add(p);
     }
 
@@ -535,6 +572,9 @@ final class Recs {
         }
         if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
         p.meta = String.join(" · ", parts);
+        p.overview = o.optString("overview").trim();
+        String poster = o.optString("poster_path", "");
+        if (!poster.isEmpty() && !poster.equals("null")) p.poster = poster;
         p.detailed = true;
     }
 
@@ -725,12 +765,19 @@ final class Recs {
     // MARK: - Images (TMDB originals on disk, up to 24 so the whole list fits; this hour's kept ready in memory)
 
     private void download(Pick p) throws IOException {
-        File f = imageFile(p);
+        fetch(IMAGES + p.backdrop, imageFile(p));
+    }
+
+    /** The posters, at the size the Popular row shows them. */
+    private static final String POSTERS = "https://image.tmdb.org/t/p/w342";
+
+    /** Downloads `url` into `f` unless it's already there (the folder keeps the 24 newest). */
+    private static void fetch(String url, File f) throws IOException {
         if (f.exists()) return;
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection();
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
         try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
@@ -770,7 +817,7 @@ final class Recs {
             if (forLight != light) return;   // the design changed midway: this one is stale
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
-                while (images.size() > (forLight ? 10 : 4)) images.remove(images.keySet().iterator().next());
+                while (images.size() > (forLight ? 2 * SLIDES : 4)) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();
         } catch (IOException | RuntimeException | OutOfMemoryError e) {
@@ -806,6 +853,192 @@ final class Recs {
         }
     }
 
+    // MARK: - Continue: the titles opened with Watch, the last one first (what's watched inside an app stays there)
+
+    /**
+     * In the background: what the apps played since the last look (PlayingListener saw it) goes to the front of the
+     * Continue row, with TMDB's photo when TMDB has the title (else the app's own picture, like a YouTube video's).
+     * Called when you come back home; it also turns the listener on (in Free My TV mode only, over the TV's own ADB).
+     */
+    void checkPlaying() {
+        if (!HomeMode.FREE.equals(HomeMode.state(context).optString("mode"))) return;
+        io.execute(() -> {
+            allowListener();
+            SharedPreferences sp = context.getSharedPreferences("watched", Context.MODE_PRIVATE);
+            long synced = sp.getLong("playingSynced", 0), newest = synced;
+            JSONArray seen = PlayingListener.read(context);
+            List<JSONObject> fresh = new ArrayList<>();
+            for (int i = 0; i < seen.length(); i++) {
+                JSONObject o = seen.optJSONObject(i);
+                if (o != null && o.optLong("at") > synced) fresh.add(o);
+            }
+            if (fresh.isEmpty()) return;
+            java.util.Collections.sort(fresh, (x, y) -> Long.compare(x.optLong("at"), y.optLong("at")));
+            List<Pick> before = history();
+            for (JSONObject o : fresh) {
+                String source = o.optString("pkg") + "|" + o.optString("title");
+                Pick p = null;
+                for (Pick h : before) if (source.equals(h.source)) p = h;   // looked up already: just where you are now
+                if (p == null) p = lookup(o.optString("title"), o.optString("pkg"));
+                p.source = source;
+                p.position = o.optLong("position");
+                p.duration = o.optLong("duration");
+                p.art = o.optString("art");
+                opened(p);   // the last one played ends up first
+                newest = Math.max(newest, o.optLong("at"));
+            }
+            sp.edit().putLong("playingSynced", newest).apply();
+            notifyListeners();
+        });
+    }
+
+    /** Gives PlayingListener its access over ADB when it doesn't have it (at most once an hour). */
+    private void allowListener() {
+        String me = context.getPackageName() + "/" + PlayingListener.class.getName();
+        String on = android.provider.Settings.Secure.getString(context.getContentResolver(), "enabled_notification_listeners");
+        if (on != null && on.contains(me)) return;
+        SharedPreferences sp = context.getSharedPreferences("watched", Context.MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        if (Math.abs(now - sp.getLong("listenerAt", 0)) < 3600_000L) return;
+        sp.edit().putLong("listenerAt", now).apply();
+        try (Adb adb = Adb.connect(context, 0, null)) {
+            adb.shell("cmd notification allow_listener " + me);
+        } catch (IOException | RuntimeException e) {
+            AppLog.w("playing listener: " + e.getMessage());
+        }
+    }
+
+    /** The title in TMDB (photo, synopsis), when a movie or show there has that very name; else just the name. */
+    private Pick lookup(String title, String pkg) {
+        Pick p = new Pick();
+        p.kind = "app";
+        p.id = (pkg + "|" + title).hashCode();
+        p.title = title;
+        p.pkg = pkg;
+        for (String[] sv : SERVICES) if (sv[2].equals(pkg)) p.app = sv[1];
+        if (p.app != null) p.meta = SERVICE_NAME.get(p.app);
+        try {
+            JSONArray results = get("/search/multi?include_adult=false&language=" + lang() + "&query="
+                    + URLEncoder.encode(title, "UTF-8")).optJSONArray("results");
+            String want = plain(title);
+            for (int i = 0; results != null && i < results.length() && i < 5; i++) {
+                JSONObject o = results.getJSONObject(i);
+                String kind = o.optString("media_type");
+                if (!kind.equals("movie") && !kind.equals("tv")) continue;
+                String field = kind.equals("movie") ? "title" : "name";
+                if (!want.equals(plain(o.optString(field))) && !want.equals(plain(o.optString("original_" + field)))) continue;
+                String backdrop = o.optString("backdrop_path", "");
+                if (backdrop.isEmpty() || backdrop.equals("null")) continue;
+                p.kind = kind;
+                p.id = o.optInt("id");
+                p.title = o.optString(field, title);
+                p.backdrop = backdrop;
+                String poster = o.optString("poster_path", "");
+                if (!poster.equals("null")) p.poster = poster;
+                p.overview = o.optString("overview").trim();
+                p.meta = (kind.equals("tv") ? Ui.tr("Series") + " · " : "") + (p.app == null ? "" : SERVICE_NAME.get(p.app));
+                break;
+            }
+        } catch (Exception e) {
+            AppLog.w("continue lookup: " + e.getMessage());
+        }
+        return p;
+    }
+
+    /** Lowercase letters and digits only: "Thunderbolts*" and "Thunderbolts" are the same title. */
+    private static String plain(String s) {
+        return s == null ? "" : s.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]", "");
+    }
+
+    /** Watch was pressed on `p`: it goes to the front of the Continue row. */
+    void opened(Pick p) {
+        if (p == null || p.photo != null) return;
+        List<Pick> list = history();
+        for (int i = list.size() - 1; i >= 0; i--) {
+            Pick h = list.get(i);
+            if (key(h).equals(key(p)) || (!p.source.isEmpty() && p.source.equals(h.source))) list.remove(i);
+        }
+        list.add(0, p);
+        while (list.size() > HISTORY) list.remove(list.size() - 1);
+        try {
+            JSONArray a = new JSONArray();
+            for (Pick h : list) {
+                a.put(new JSONObject().put("id", h.id).put("kind", h.kind).put("title", h.title).put("backdrop", h.backdrop)
+                        .put("link", h.link == null ? "" : h.link).put("meta", h.meta).put("app", h.app == null ? "" : h.app)
+                        .put("pkg", h.pkg == null ? "" : h.pkg).put("detailed", true).put("overview", h.overview)
+                        .put("poster", h.poster).put("source", h.source).put("art", h.art).put("position", h.position)
+                        .put("duration", h.duration));
+            }
+            context.getSharedPreferences("watched", Context.MODE_PRIVATE).edit().putString("list", a.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** The titles opened with Watch whose app is still on the TV, the last one first. */
+    List<Pick> history() {
+        List<Pick> out = new ArrayList<>();
+        try {
+            String saved = context.getSharedPreferences("watched", Context.MODE_PRIVATE).getString("list", "[]");
+            for (Pick p : parse(new JSONArray(saved))) if (p.pkg != null && installed(p.pkg)) out.add(p);
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /**
+     * The title's small picture (or null: it's made in the background, and the listeners hear when it's ready): its
+     * poster, or its photo (else the app's own picture of it).
+     */
+    Thumb thumb(Pick p, boolean poster, int w, int h) {
+        if (p == null || (poster && p.poster.isEmpty())) return null;
+        final boolean own = !poster && (p.backdrop == null || p.backdrop.isEmpty());
+        if (own && p.art.isEmpty()) return null;
+        final String key = poster ? "poster:" + p.poster : own ? p.art : p.backdrop;
+        synchronized (thumbs) {
+            Thumb t = thumbs.get(key);
+            if (t != null) return t;
+            if (!thumbsPending.add(key)) return null;
+        }
+        io.execute(() -> {
+            try {
+                File f;
+                if (poster) {
+                    f = new File(new File(context.getCacheDir(), "posters"), p.poster.replace("/", ""));
+                    fetch(POSTERS + p.poster, f);
+                } else if (own) {
+                    f = new File(p.art);
+                } else {
+                    download(p);
+                    f = imageFile(p);
+                }
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(f.getPath(), bounds);
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inSampleSize = 1;
+                while (bounds.outWidth / (opts.inSampleSize * 2) >= w * 2) opts.inSampleSize *= 2;
+                Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+                if (b == null) throw new IOException("unreadable image");
+                int cw = Math.min(b.getWidth(), Math.round(b.getHeight() * (float) w / h)), ch = Math.min(b.getHeight(), Math.round(cw * (float) h / w));
+                Bitmap crop = Bitmap.createBitmap(b, (b.getWidth() - cw) / 2, (b.getHeight() - ch) / 2, cw, ch);
+                Bitmap small = Ui.downscale(crop, w, h);
+                if (crop != b && crop != small) crop.recycle();
+                if (b != small) b.recycle();
+                Thumb t = new Thumb(Backdrop.gpu(small));
+                synchronized (thumbs) {
+                    thumbs.put(key, t);
+                    while (thumbs.size() > THUMBS) thumbs.remove(thumbs.keySet().iterator().next());
+                }
+                notifyListeners();
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                AppLog.w("continue image: " + e.getMessage());
+            } finally {
+                synchronized (thumbs) { thumbsPending.remove(key); }
+            }
+        });
+        return null;
+    }
+
     // MARK: - List cache
 
     private void save() {
@@ -814,7 +1047,7 @@ final class Recs {
             for (Pick p : picks) {
                 a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop).put("link", p.link == null ? "" : p.link)
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
-                        .put("detailed", p.detailed));
+                        .put("detailed", p.detailed).put("overview", p.overview).put("poster", p.poster));
             }
             SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
                     .putString("language", listLanguage)
@@ -840,6 +1073,12 @@ final class Recs {
             p.backdrop = o.optString("backdrop");
             p.link = o.optString("link").isEmpty() ? null : o.optString("link");
             p.meta = o.optString("meta");
+            p.overview = o.optString("overview");
+            p.poster = o.optString("poster");
+            p.source = o.optString("source");
+            p.art = o.optString("art");
+            p.position = o.optLong("position");
+            p.duration = o.optLong("duration");
             p.app = o.optString("app").isEmpty() ? null : o.optString("app");
             p.pkg = o.optString("pkg").isEmpty() ? null : o.optString("pkg");
             p.detailed = o.optBoolean("detailed");
