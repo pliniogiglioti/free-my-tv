@@ -150,7 +150,7 @@ final class Recs {
     /** Small copies of the photos of the titles opened with Watch (the home screen's Continue row). */
     private final Map<String, Thumb> thumbs = new LinkedHashMap<>();
     private final java.util.Set<String> thumbsPending = new java.util.HashSet<>();
-    private static final int HISTORY = 12, THUMBS = 16;
+    private static final int HISTORY = 12, THUMBS = 64;   // thumbs: Continue and both Popular rows fit
     /** The featured titles taking turns at the top of each tab. */
     static final int SLIDES = 5;
 

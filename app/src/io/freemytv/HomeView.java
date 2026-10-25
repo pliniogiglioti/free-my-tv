@@ -107,7 +107,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Continue (what you watched: Recs.history) where the shelf would be, the shelf (Apps) under it; then Popular,
     // the posters of the tab's titles. Each row also scrolls sideways.
     private static final float ROWS_TOP = 874, ROW_CARD_H = 126, ROW_GAP = 40, ROW_STEP = 260, POPULAR_STEP = 116;
-    private static final float POSTER_W = 150, POSTER_H = 225, PAGE_H = 1830;
+    // Popular: Movies, then Shows (each with its posters' row); Home has both, Movies and Shows their own.
+    private static final float POSTER_W = 150, POSTER_H = 225, POSTER_STEP = 360, PAGE_H = 2060;
     private static final float L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 834, L_TILE_H = 126;
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
@@ -117,7 +118,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Tabs, then the round buttons, in topRects; the Apps tab shows the installed apps in place of the cards. */
     private static final int TABS = 4, APPS_TAB = 3;
     private static final String[] TAB_KIND = {null, "tv", "movie", null};
-    private static final int Z_TOP = 4, Z_CARDS = 5, Z_APPS = 6, Z_RECENT = 7, Z_POPULAR = 10;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_APPS = 6, Z_RECENT = 7, Z_POPULAR = 10, Z_INPUTS = 11, Z_SHOWS = 12;
+    // HDMI Inputs at the top right opens a list right under it (Live TV and the HDMI ports, the drawer's inputs).
+    private static final float INPUTS_W = 380, INPUTS_ROW = 66, INPUTS_PAD = 12;
     // The Apps tab: every installed app in 16:9 cards, 6 to a row, three rows at a time (the shelf steps aside); the
     // ones on the shelf have a check. Holding OK puts an app on the shelf or takes it off.
     private static final int APP_COLUMNS = 6, APP_ROWS = 3;
@@ -173,7 +176,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** 1 while the Apps tab shows: the shelf fades out and drops away. */
     private final Spring shelfAway = new Spring(0.3f, 0.9f, 0);
     private Spring[] appFocus = new Spring[0];
-    private final Row continueRow = new Row(false), popularRow = new Row(true);
+    private final Row continueRow = new Row(false), moviesRow = new Row(true), showsRow = new Row(true);
+    private int inputIndex;
+    private boolean inputsShown;
+    private final RectF inputsBox = new RectF(), inputRow = new RectF();
     /** How far the page has scrolled down, and how far the shelf moved down for Continue (1080 space). */
     private final Spring page = new Spring(0.3f, 0.9f, 0), shelfDrop = new Spring(0.3f, 0.9f, 0);
     private final RectF watchButton = new RectF();
@@ -200,6 +206,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int appIndex;
     private final RectF appCell = new RectF(), focusedApp = new RectF();
     private TextPaint lAppLabel;
+    private Paint lWeatherSmall;
     private String heroTitle = "", heroMeta = "";
     /** The first name of the TV's Google account ("" until it's read, or when there is none). */
     private String welcomeName = "";
@@ -558,7 +565,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             zone = Z_RECENT;
             continueRow.index = 0;
         }
-        continueRow.scroll.target = popularRow.scroll.target = 0;
+        continueRow.scroll.target = moviesRow.scroll.target = showsRow.scroll.target = 0;
         if (!animated) shelfAway.snap(shelfAway.target);
         retarget(!animated);
         motionDirty = true;
@@ -593,6 +600,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         checkNight(true);
         layoutStatus();
         heroDirty = statusDirty = drawerDirty = true;
+        status.invalidate();    // the weather at the top
         platter.invalidate();
     }
 
@@ -704,6 +712,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         overviewKey = "";
         heroShadersW = 0;
         lAppLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, L_DIM));
+        lWeatherSmall = Ui.numbers(Ui.medium, 28 * k, WHITE);
         lAppLabel.setTextAlign(Paint.Align.CENTER);
         appLabels = null;
         lightGradient = null;
@@ -764,7 +773,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt) | step(appFocus, dt) | appScroll.step(dt)
-                | continueRow.step(dt) | popularRow.step(dt);
+                | continueRow.step(dt) | moviesRow.step(dt) | showsRow.step(dt);
         if (topMoving) status.invalidate();
         heroMoving |= topMoving | cardsMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
@@ -1917,9 +1926,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? 0 : -1, snap) | topChanged;
         heroChanged |= aim(appFocus, !sheetOpen && zone == Z_APPS ? appIndex : -1, snap);
-        heroChanged |= continueRow.aim(!sheetOpen && zone == Z_RECENT, snap) | popularRow.aim(!sheetOpen && zone == Z_POPULAR, snap);
+        heroChanged |= continueRow.aim(!sheetOpen && zone == Z_RECENT, snap) | moviesRow.aim(!sheetOpen && zone == Z_POPULAR, snap)
+                | showsRow.aim(!sheetOpen && zone == Z_SHOWS, snap);
+        heroChanged |= inputsShown || zone == Z_INPUTS;
+        inputsShown = zone == Z_INPUTS;
         // The page: down to the shelf (under Continue) or to Popular; the drawer comes up from the resting page.
-        float pageTo = drawerOpen ? 0 : zone == Z_SHELF ? shelfTop() - ROWS_TOP : zone == Z_POPULAR ? popularTop() - 556 : 0;
+        float pageTo = drawerOpen ? 0 : zone == Z_SHELF ? shelfTop() - ROWS_TOP : zone == Z_POPULAR ? moviesRow.top - 556
+                : zone == Z_SHOWS ? showsRow.top - 556 : 0;
         float dropTo = recentsOn() && !drawerOpen ? shelfTop() - ROWS_TOP : 0;
         if (page.target != pageTo || shelfDrop.target != dropTo) {
             page.target = pageTo;
@@ -1983,9 +1996,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return tab == 0 && picksOn() && !continueRow.items.isEmpty();
     }
 
-    /** The Popular row: on Home, Shows and Movies (the tab's titles). */
-    private boolean popularOn() {
-        return tab != APPS_TAB && picksOn() && !popularRow.items.isEmpty();
+    /** Popular movies: on Home and Movies. */
+    private boolean moviesOn() {
+        return (tab == 0 || "movie".equals(TAB_KIND[tab])) && picksOn() && !moviesRow.items.isEmpty();
+    }
+
+    /** Popular shows: on Home and Shows. */
+    private boolean showsOn() {
+        return (tab == 0 || "tv".equals(TAB_KIND[tab])) && picksOn() && !showsRow.items.isEmpty();
     }
 
     /** The shelf's tiles' top in the page: under Continue on Home, else where it always was. */
@@ -1999,7 +2017,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutRows() {
         continueRow.layout(ROWS_TOP);
-        popularRow.layout(popularTop());
+        moviesRow.layout(popularTop());
+        showsRow.layout(popularTop() + (moviesOn() ? POSTER_STEP : 0));
         heroDirty = true;
     }
 
@@ -2497,6 +2516,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_DRAWER || zone == WIDGETS) {
             closeDrawer();
             retarget(false);
+        } else if (zone == Z_INPUTS) {
+            zone = Z_TOP;
+            retarget(false);
         } else if (zone != Z_SHELF) {
             zone = Z_SHELF;
             if (tab == APPS_TAB) selectTab(0);
@@ -2529,8 +2551,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         return;
                     }
                 } else {
-                    if (drawerItems.isEmpty()) return;
-                    openDrawer();
+                    return;     // the bottom of the page: no drawer any more
                 }
                 break;
             case Z_HERO:
@@ -2658,18 +2679,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             it = lightButtons.get(topIndex - TABS);
             r = topRects[topIndex];
+        } else if (zone == Z_INPUTS) {
+            if (inputIndex >= drawerInputs) return;
+            it = drawerItems.get(inputIndex);
+            inputRect(inputIndex, inputRow);
+            r = inputRow;
+            zone = Z_TOP;   // the list closes behind the input
+            retarget(false);
         } else if (zone == Z_RECENT) {
             if (continueRow.index >= continueRow.items.size()) return;
             Recs.Pick p = continueRow.items.get(continueRow.index);
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             continueRow.screen(continueRow.index, focusedCell);
             r = focusedCell;
-        } else if (zone == Z_POPULAR) {
-            if (popularRow.index >= popularRow.items.size()) return;
-            Recs.Pick p = popularRow.items.get(popularRow.index);
+        } else if (zone == Z_POPULAR || zone == Z_SHOWS) {
+            Row row = zone == Z_POPULAR ? moviesRow : showsRow;
+            if (row.index >= row.items.size()) return;
+            Recs.Pick p = row.items.get(row.index);
             if (p.pkg == null) return;
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
-            popularRow.screen(popularRow.index, focusedCell);
+            row.screen(row.index, focusedCell);
             r = focusedCell;
         } else if (zone == Z_APPS) {
             if (appIndex >= installed.size()) return;
@@ -2693,10 +2722,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         if (it.kind == HomeApps.INPUTS) {
-            openDrawer();
-            for (int i = 0; i < drawerItems.size(); i++) {
-                if (drawerItems.get(i).kind == HomeApps.INPUT) {
-                    drawerIndex = i;
+            if (drawerInputs == 0) return;
+            zone = Z_INPUTS;
+            inputIndex = 0;
+            for (int i = 0; i < drawerInputs; i++) {
+                if (drawerItems.get(i).kind == HomeApps.INPUT && drawerItems.get(i).connected) {
+                    inputIndex = i;     // the first port with something on it
                     break;
                 }
             }
@@ -2971,12 +3002,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (!cards.isEmpty()) out.add(a11yId(Z_CARDS, cardIndex));
             if (recentsOn()) for (int i = 0; i < continueRow.items.size(); i++) out.add(a11yId(Z_RECENT, i));
-            if (popularOn()) for (int i = 0; i < popularRow.items.size(); i++) out.add(a11yId(Z_POPULAR, i));
+            if (moviesOn()) for (int i = 0; i < moviesRow.items.size(); i++) out.add(a11yId(Z_POPULAR, i));
+            if (showsOn()) for (int i = 0; i < showsRow.items.size(); i++) out.add(a11yId(Z_SHOWS, i));
         }
         for (int i = shelfFirst; i < Math.min(shelf.size(), shelfFirst + shelfVisible); i++) out.add(a11yId(Z_SHELF, i));
-        for (int i = 0; i < drawerItems.size(); i++) out.add(a11yId(Z_DRAWER, i));
-        if (drawerOpen && Prefs.weather()) out.add(a11yId(WIDGETS, 0));
-        if (drawerOpen && Prefs.quotes() && HomeData.active().length > 0) out.add(a11yId(WIDGETS, 1));
+        if (zone == Z_INPUTS) for (int i = 0; i < drawerInputs; i++) out.add(a11yId(Z_INPUTS, i));
     }
 
     private String a11yText(int id) {
@@ -2990,7 +3020,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return Ui.trf("{name}, tab {i} of {n}", "name", tabs()[i], "i", i + 1, "n", TABS);
             case Z_CARDS: return i < cards.size() ? pickText(cards.get(i)) : "";
             case Z_RECENT: return i < continueRow.items.size() ? pickText(continueRow.items.get(i)) : "";
-            case Z_POPULAR: return i < popularRow.items.size() ? pickText(popularRow.items.get(i)) : "";
+            case Z_INPUTS: return i < drawerInputs ? label(drawerItems, i) : "";
+            case Z_POPULAR: return i < moviesRow.items.size() ? pickText(moviesRow.items.get(i)) : "";
+            case Z_SHOWS: return i < showsRow.items.size() ? pickText(showsRow.items.get(i)) : "";
             case Z_APPS:
                 if (i >= installed.size()) return "";
                 return label(installed, i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", installed.size());
@@ -3036,6 +3068,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_RECENT:
                 if (i >= continueRow.rects.length) return false;
                 continueRow.screen(i, a11yRect);
+                dy = 0;
+                break;
+            case Z_INPUTS:
+                if (i >= drawerInputs) return false;
+                inputRect(i, a11yRect);
                 dy = heroLayer.getTranslationY();
                 break;
             case Z_APPS: {
@@ -3078,7 +3115,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_CARDS: return cardIndex < cards.size() ? a11yId(Z_CARDS, cardIndex) : -1;
             case Z_APPS: return appIndex < installed.size() ? a11yId(Z_APPS, appIndex) : -1;
             case Z_RECENT: return continueRow.index < continueRow.items.size() ? a11yId(Z_RECENT, continueRow.index) : -1;
-            case Z_POPULAR: return popularRow.index < popularRow.items.size() ? a11yId(Z_POPULAR, popularRow.index) : -1;
+            case Z_INPUTS: return a11yId(Z_INPUTS, inputIndex);
+            case Z_POPULAR: return moviesRow.index < moviesRow.items.size() ? a11yId(Z_POPULAR, moviesRow.index) : -1;
+            case Z_SHOWS: return showsRow.index < showsRow.items.size() ? a11yId(Z_SHOWS, showsRow.index) : -1;
             case Z_SHELF: return shelf.isEmpty() ? -1 : a11yId(Z_SHELF, shelfIndex);
             case Z_DRAWER: return drawerItems.isEmpty() ? -1 : a11yId(Z_DRAWER, drawerIndex);
             case WIDGETS: return a11yId(WIDGETS, widgetIndex);
@@ -3146,10 +3185,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (drawerOpen) closeDrawer();
                 continueRow.index = i;
                 break;
-            case Z_POPULAR:
-                if (i >= popularRow.items.size()) return;
+            case Z_SHOWS:
+                if (i >= showsRow.items.size()) return;
                 if (drawerOpen) closeDrawer();
-                popularRow.index = i;
+                showsRow.index = i;
+                break;
+            case Z_POPULAR:
+                if (i >= moviesRow.items.size()) return;
+                if (drawerOpen) closeDrawer();
+                moviesRow.index = i;
                 break;
             case Z_SHELF:
                 if (i >= shelf.size()) return;
@@ -3269,8 +3313,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         for (Recs.Pick p : cards) recs.backdrop(p);   // this tab's (the others' come when you switch: memory)
-        if (popularRow.set(recs.popular(TAB_KIND[tab]))) {
-            if (zone == Z_POPULAR && !popularOn()) zone = Z_SHELF;
+        if (moviesRow.set(recs.popular("movie")) | showsRow.set(recs.popular("tv"))) {
+            if ((zone == Z_POPULAR && !moviesOn()) || (zone == Z_SHOWS && !showsOn())) zone = Z_SHELF;
             layoutRows();
             retarget(false);
         }
@@ -3292,8 +3336,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tab = index;
         shelfAway.target = tab == APPS_TAB ? 1 : 0;
         if (zone == Z_RECENT && !recentsOn()) zone = Z_SHELF;
-        popularRow.set(recs.popular(TAB_KIND[tab]));
-        popularRow.scroll.snap(popularRow.scroll.target = 0);
+        if ((zone == Z_POPULAR && !moviesOn()) || (zone == Z_SHOWS && !showsOn())) zone = Z_SHELF;
+        moviesRow.scroll.snap(moviesRow.scroll.target = 0);
+        showsRow.scroll.snap(showsRow.scroll.target = 0);
         layoutRows();
         retarget(false);
         motionDirty = true;
@@ -3385,8 +3430,49 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         drawHeroText(c);
         if (recentsOn()) continueRow.draw(c, Ui.tr("row|Continue"));
-        if (popularOn()) popularRow.draw(c, Ui.tr("row|Popular"));
+        if (moviesOn()) moviesRow.draw(c, Ui.tr("Popular movies"));
+        if (showsOn()) showsRow.draw(c, Ui.tr("Popular shows"));
+        if (zone == Z_INPUTS) drawInputs(c);
         if (HomeData.coinCount() > 0) drawQuotes(c);
+    }
+
+    /** The inputs' list: under the HDMI Inputs button, right-aligned with it, one row per input. */
+    private void inputsBox(RectF out) {
+        RectF b = topRects[TABS];
+        for (int i = 0; i < lightButtons.size(); i++) if (lightButtons.get(i).kind == HomeApps.INPUTS) b = topRects[TABS + i];
+        float right = Math.min(CONTENT_R * k, b.centerX() + INPUTS_W * k / 2), top = b.bottom + 18 * k;
+        out.set(right - INPUTS_W * k, top, right, top + (2 * INPUTS_PAD + drawerInputs * INPUTS_ROW) * k);
+    }
+
+    private void inputRect(int i, RectF out) {
+        inputsBox(inputsBox);
+        float top = inputsBox.top + (INPUTS_PAD + i * INPUTS_ROW) * k;
+        out.set(inputsBox.left + INPUTS_PAD * k, top, inputsBox.right - INPUTS_PAD * k, top + INPUTS_ROW * k);
+    }
+
+    private void drawInputs(Canvas c) {
+        inputsBox(inputsBox);
+        float r = 26 * k;
+        tmp.set(inputsBox);
+        tmp.offset(0, 14 * k);
+        shadow.setColor(0x8C000000);
+        shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
+        fill.setShader(null);
+        fill.setColor(0xF2242427);
+        c.drawRoundRect(inputsBox, r, r, fill);
+        for (int i = 0; i < drawerInputs && i < drawerItems.size(); i++) {
+            HomeApps.Item it = drawerItems.get(i);
+            inputRect(i, inputRow);
+            boolean on = i == inputIndex, off = it.kind == HomeApps.INPUT && !it.connected;
+            if (on) {
+                fill.setColor(0xFFF5F5F7);
+                c.drawRoundRect(inputRow, 16 * k, 16 * k, fill);
+            }
+            int ink = on ? L_INK : off ? 0x73FFFFFF : 0xEBFFFFFF;
+            Symbols.draw(getContext(), c, it.symbol, inputRow.left + 36 * k, inputRow.centerY(), 28 * k, ink);
+            lWatch.setColor(ink);
+            c.drawText(it.label, inputRow.left + 70 * k, inputRow.centerY() + Ui.halfCap(lWatch), lWatch);
+        }
     }
 
     /** The installed app with that package (its card), or null. */
@@ -3566,8 +3652,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawText(label, x, r.bottom + (40 + 4 * f) * k, lTip);
             }
         }
-        if (sleepText.isEmpty()) return;
         float right = (lightButtons.isEmpty() ? CONTENT_R * k : topRects[TABS].left) - 28 * k, cy = L_BUTTON_CY * k;
+        HomeData.Weather wx = data.weather;
+        if (Prefs.weather() && !Double.isNaN(wx.temp)) {
+            String temp = HomeData.degrees(wx.temp), symbol = Symbols.weather(wx.code, wx.isDay);
+            float size = 30 * k, tw = lWeatherSmall.measureText(temp);
+            lWeatherSmall.setColor(tone(L_INK, 0xEBFFFFFF));
+            c.drawText(temp, right - tw, cy + Ui.halfCap(lWeatherSmall), lWeatherSmall);
+            float sw = Symbols.width(getContext(), symbol, size);
+            Symbols.draw(getContext(), c, symbol, right - tw - 10 * k - sw / 2, cy, size, lWeatherSmall.getColor());
+            right -= tw + 10 * k + sw + 30 * k;
+        }
+        if (sleepText.isEmpty()) return;
         float tw = lQuote.measureText(sleepText), size = lQuote.getTextSize();
         c.drawText(sleepText, right - tw, cy + Ui.halfCap(lQuote), lQuote);
         Symbols.draw(getContext(), c, "bedtime", right - tw - size * 0.9f, cy, size, lQuote.getColor());
@@ -3576,9 +3672,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean moveLight(int dx, int dy) {
         switch (zone) {
             case Z_SHELF:
-                if (dy > 0 && popularOn()) {
-                    zone = Z_POPULAR;
-                    popularRow.index = popularRow.nearest(shelf.isEmpty() ? 0 : tileRects[shelfIndex].centerX());
+                if (dy > 0 && (moviesOn() || showsOn())) {
+                    zone = moviesOn() ? Z_POPULAR : Z_SHOWS;
+                    Row below = moviesOn() ? moviesRow : showsRow;
+                    below.index = below.nearest(shelf.isEmpty() ? 0 : tileRects[shelfIndex].centerX());
                     break;
                 }
                 // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
@@ -3665,19 +3762,39 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
                 break;
             case Z_POPULAR:
+            case Z_SHOWS: {
+                Row row = zone == Z_POPULAR ? moviesRow : showsRow;
+                row.screen(row.index, tmp);
                 if (dx != 0) {
-                    int next = Math.max(0, Math.min(popularRow.items.size() - 1, popularRow.index + dx));
-                    if (next == popularRow.index) return true;
-                    popularRow.index = next;
+                    int next = Math.max(0, Math.min(row.items.size() - 1, row.index + dx));
+                    if (next == row.index) return true;
+                    row.index = next;
+                } else if (dy < 0 && zone == Z_SHOWS && moviesOn()) {
+                    zone = Z_POPULAR;
+                    moviesRow.index = moviesRow.nearest(tmp.centerX());
                 } else if (dy < 0) {
                     zone = Z_SHELF;
-                    if (!shelf.isEmpty()) {
-                        popularRow.screen(popularRow.index, tmp);
-                        shelfIndex = nearest(tileRects, tileRects.length, tmp.centerX());
+                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, tmp.centerX());
+                } else if (zone == Z_POPULAR && showsOn()) {
+                    zone = Z_SHOWS;
+                    showsRow.index = showsRow.nearest(tmp.centerX());
+                } else {
+                    return true;
+                }
+                break;
+            }
+            case Z_INPUTS:
+                if (dy != 0) {
+                    int next = inputIndex + dy;
+                    if (next < 0) {
+                        zone = Z_TOP;   // up from the first one: back to the button
+                    } else if (next < drawerInputs) {
+                        inputIndex = next;
+                    } else {
+                        return true;
                     }
                 } else {
-                    if (drawerItems.isEmpty()) return true;
-                    openDrawer();
+                    return true;
                 }
                 break;
             case Z_APPS: {

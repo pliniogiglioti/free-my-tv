@@ -39,8 +39,8 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Free My TV's settings (the app's icon, "All Apps", or the gear on the home screen), in the style of Apple TV's
- * settings: the big symbol and title on the left, the list on the right with the focused row in white. "Home screen"
+ * Free My TV's settings (the app's icon, "All Apps", or the gear on the home screen), as on Google TV: a dark panel
+ * that slides in from the right over the dimmed home screen, the focused row in white. "Home screen"
  * opens the Free My TV / Original choice (with a check on the current one); the switch runs in the main process
  * (HomeMode) and this screen only asks for it and follows the state file.
  */
@@ -142,6 +142,9 @@ public class SettingsActivity extends Activity {
         // one 1080 px screen: the rows share the 462 px that seven took.
         private static final float MAIN_TOP = 140, ROW_H = 53.75f, MAIN_GAP = 4;
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
+        /** The panel's left edge (1920 space) and its slide in from the right. */
+        private static final float PANEL_X = 960;
+        private final Spring enter = new Spring(0.32f, 0.92f, 0);
 
         private final SettingsActivity activity;
         private final Scene scene = new Scene();
@@ -317,6 +320,8 @@ public class SettingsActivity extends Activity {
             whyRows = null;
             startedAt = SystemClock.uptimeMillis();
             lastNanos = 0;
+            enter.snap(0);
+            enter.target = 1;
             handler.post(poll);
             Choreographer.getInstance().postFrameCallback(this);
             spoken.readAgain();
@@ -331,9 +336,9 @@ public class SettingsActivity extends Activity {
 
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            boolean moving = busy();
+            boolean moving = busy() || !enter.settled();
             for (Spring s : pop) moving |= !s.settled();
-            if (moving || SystemClock.uptimeMillis() - lastSky >= 100) invalidate();
+            if (moving) invalidate();
             Choreographer.getInstance().postFrameCallback(this);
         }
 
@@ -345,7 +350,7 @@ public class SettingsActivity extends Activity {
             Symbols.warm(getContext(), "sparkles", 150 * k);
             Symbols.warm(getContext(), "chevron_right", 22 * k);
             Symbols.warm(getContext(), "check", 26 * k);
-            title = Ui.text(Ui.displaySemibold, 50 * k, 0xFFFFFFFF);
+            title = Ui.text(Ui.displaySemibold, 40 * k, 0xFFFFFFFF);
             title.setTextAlign(Paint.Align.CENTER);
             subtitle = Ui.text(Ui.regular, 26 * k, 0x99FFFFFF);
             subtitle.setTextAlign(Paint.Align.CENTER);
@@ -409,21 +414,28 @@ public class SettingsActivity extends Activity {
             }
             long up = SystemClock.uptimeMillis();
             float seconds = (up - startedAt) / 1000f;
-            if (up - lastSky >= 100) {
-                lastSky = up;
-                scene.advance(seconds);
-            }
-            scene.drawBackground(c);
-
-            // On the left: big symbol, title, description.
-            float cx = 500 * k;
-            Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, 0xEBFFFFFF);
-            c.drawText("Free My TV", cx, 612 * k, title);
-            c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
-            c.drawText(versionName(getContext()), cx, 704 * k, version);
+            enter.step(dt);
+            float e = Ui.clamp(enter.value);
+            // The home screen behind, dimmed; the panel slides in from the right.
+            c.drawColor(Ui.alpha(0xFF000000, 0.55f * e));
+            c.save();
+            c.translate((1 - e) * (w - PANEL_X * k), 0);
+            Paint panel = white;
+            int was = panel.getColor();
+            panel.setColor(0xF71B1B1E);
+            c.drawRect(PANEL_X * k, 0, w, h, panel);
+            panel.setColor(was);
+            float tx = (LIST_X + 30) * k;
+            title.setTextAlign(Paint.Align.LEFT);
+            c.drawText("Free My TV", tx, 92 * k, title);
+            title.setTextAlign(Paint.Align.CENTER);
+            version.setTextAlign(Paint.Align.RIGHT);
+            c.drawText(versionName(getContext()), (LIST_R - 30) * k, 92 * k, version);
+            version.setTextAlign(Paint.Align.CENTER);
 
             if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c);
             else drawList(c);
+            c.restore();
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -485,7 +497,7 @@ public class SettingsActivity extends Activity {
                 c.restore();
                 y += errorLayout.getLineBaseline(errorLayout.getLineCount() - 1) - errorLayout.getLineBaseline(0) + 46 * k;
             }
-            y = drawComparison(c, y);
+            y = drawComparison(c, y + 24 * k);
             y = drawRecs(c, y + 26 * k);
             drawNotices(c, y + 40 * k);
         }
@@ -501,7 +513,7 @@ public class SettingsActivity extends Activity {
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps for tmdb_region={region}.", "region", Recs.REGION);
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
-            else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, 3 new ones every hour.", "n", count);
+            else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, {s} new ones every hour.", "n", count, "s", Recs.SLIDES);
             else line = Ui.tr("Fetching titles…");
             c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + 42 * k, notice);
             version.setTextAlign(Paint.Align.LEFT);
